@@ -1,0 +1,83 @@
+FROM ubuntu
+MAINTAINER Sébastien REMY
+
+# Install Java
+RUN \
+  echo oracle-java8-installer shared/accepted-oracle-license-v1-1 select true | debconf-set-selections && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends software-properties-common && \
+  add-apt-repository -y ppa:webupd8team/java && \
+  apt-get update && \
+  apt-get install -y oracle-java8-installer oracle-java8-set-default && \
+  rm -rf /var/lib/apt/lists/* && \
+  rm -rf /var/cache/oracle-jdk8-installer
+
+# Define commonly used JAVA_HOME variable
+ENV JAVA_HOME /usr/lib/jvm/java-8-oracle
+
+
+# explicitly set user/group IDs
+RUN groupadd -r cassandra --gid=999 && useradd -r -g cassandra --uid=999 cassandra
+
+# grab gosu for easy step-down from root
+ENV GOSU_VERSION 1.10
+RUN set -x \
+	&& apt-get update && apt-get install -y --no-install-recommends ca-certificates wget && rm -rf /var/lib/apt/lists/* \
+	&& wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)" \
+	&& wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc" \
+	&& export GNUPGHOME="$(mktemp -d)" \
+	&& gpg --keyserver ha.pool.sks-keyservers.net --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \
+	&& gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \
+	&& rm -r "$GNUPGHOME" /usr/local/bin/gosu.asc \
+	&& chmod +x /usr/local/bin/gosu \
+	&& gosu nobody true \
+	&& apt-get remove -y  ca-certificates
+
+
+# solves warning: "jemalloc shared library could not be preloaded to speed up memory allocations"
+RUN apt-get update && apt-get install -y --no-install-recommends libjemalloc1 && rm -rf /var/lib/apt/lists/*
+
+
+# https://wiki.apache.org/cassandra/DebianPackaging#Adding_Repository_Keys
+ENV GPG_KEYS \
+# gpg: key 0353B12C: public key "T Jake Luciani <jake@apache.org>" imported
+	514A2AD631A57A16DD0047EC749D6EEC0353B12C \
+# gpg: key FE4B2BDA: public key "Michael Shuler <michael@pbandjelly.org>" imported
+	A26E528B271F19B9E5D8E19EA278B781FE4B2BDA
+RUN set -ex; \
+	export GNUPGHOME="$(mktemp -d)"; \
+	for key in $GPG_KEYS; do \
+		gpg --keyserver ha.pool.sks-keyservers.net --recv-keys "$key"; \
+	done; \
+	gpg --export $GPG_KEYS > /etc/apt/trusted.gpg.d/cassandra.gpg; \
+	rm -r "$GNUPGHOME"; \
+	apt-key list
+
+RUN echo 'deb http://www.apache.org/dist/cassandra/debian 311x main' >> /etc/apt/sources.list.d/cassandra.list
+
+ENV CASSANDRA_VERSION 3.11.0
+
+RUN apt-get update \
+	&& apt-get install -y \
+		cassandra="$CASSANDRA_VERSION" \
+		cassandra-tools="$CASSANDRA_VERSION" \
+	&& rm -rf /var/lib/apt/lists/*
+
+ENV CASSANDRA_CONFIG /etc/cassandra
+
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+ENTRYPOINT ["/docker-entrypoint.sh"]
+
+RUN mkdir -p /var/lib/cassandra "$CASSANDRA_CONFIG" \
+	&& chown -R cassandra:cassandra /var/lib/cassandra "$CASSANDRA_CONFIG" \
+	&& chmod 777 /var/lib/cassandra "$CASSANDRA_CONFIG"
+VOLUME /var/lib/cassandra
+
+
+# 7000: intra-node communication
+# 7001: TLS intra-node communication
+# 7199: JMX
+# 9042: CQL
+# 9160: thrift service
+EXPOSE 7000 7001 7199 9042 9160
+CMD ["cassandra", "-f"]
