@@ -12,6 +12,29 @@ if [ "$1" = 'cassandra' -a "$(id -u)" = '0' ]; then
 	exec gosu cassandra "$BASH_SOURCE" "$@"
 fi
 
+######## Extract and remove -s argument ########
+
+ARGS=()
+skip=false
+for var in "$@"; do
+	# Detect seed argument: (-s <ip_address>)
+	if [ "$var" = '-s' ]; then
+		skip=true
+		continue
+	fi
+	
+	if [ "$skip" = false ]; then
+		ARGS+=("$var")
+	else
+		skip=false
+		seed_ipaddress="$var"
+	fi
+done
+
+set -- "${ARGS[@]}"
+################################################
+
+
 if [ "$1" = 'cassandra' ]; then
 	: ${CASSANDRA_RPC_ADDRESS='0.0.0.0'}
 
@@ -31,6 +54,11 @@ if [ "$1" = 'cassandra' ]; then
 		: ${CASSANDRA_SEEDS:="cassandra"}
 	fi
 	: ${CASSANDRA_SEEDS:="$CASSANDRA_BROADCAST_ADDRESS"}
+	
+	if [ -n "${seed_ipaddress}" ]; then
+		CASSANDRA_SEEDS=$seed_ipaddress
+		echo "CASSANDRA_SEEDS=$seed_ipaddress"
+	fi
 	
 	sed -ri 's/(- seeds:).*/\1 "'"$CASSANDRA_SEEDS"'"/' "$CASSANDRA_CONFIG/cassandra.yaml"
 

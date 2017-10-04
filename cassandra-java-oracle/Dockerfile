@@ -1,5 +1,5 @@
 FROM ubuntu
-MAINTAINER Sébastien REMY
+MAINTAINER SÃ©bastien REMY
 
 # Install Java
 RUN \
